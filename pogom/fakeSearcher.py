@@ -1,5 +1,6 @@
 import random
 import imp
+import calendar
 
 from datetime import datetime
 from base64 import b64encode
@@ -8,7 +9,8 @@ from pogom import utils
 from .models import (Pokemon)
 
 
-def add_fake_pokemon(db_updates_queue, fake_pokemon_objects):
+def add_fake_pokemon(args, db_updates_queue, wh_update_queue, 
+                     fake_pokemon_objects):
     if not type(fake_pokemon_objects) is list:
         print 'Fake Script: add_fake_pokemon() expects a list'
         print 'instead, got ' + str(fake_pokemon_objects)
@@ -55,6 +57,7 @@ def add_fake_pokemon(db_updates_queue, fake_pokemon_objects):
             'weight': None,
             'gender': None,
             'form': None,
+            'cp_multiplier': None,
             }
 
         for key, value in obj.items():
@@ -63,7 +66,32 @@ def add_fake_pokemon(db_updates_queue, fake_pokemon_objects):
             else:
                 print('got unknown fake-pokemon attribute: ' + key)
 
-        pokemons[fakeid] = pokemon
+        pokemons[pokemon['encounter_id']] = pokemon
+
+        if args.webhooks:
+            pokemon_id = pokemon['pokemon_id']
+            disappear_time = pokemon['disappear_time']
+            if (pokemon_id in args.webhook_whitelist or
+                (not args.webhook_whitelist and pokemon_id
+                not in args.webhook_blacklist)):
+                wh_poke = pokemons[pokemon['encounter_id']].copy()
+                wh_poke.update({
+                    'disappear_time': calendar.timegm(
+                          disappear_time.timetuple()),
+                    'last_modified_time': None, # todo
+                    'time_until_hidden_ms': time_left_in_seconds*1000,
+                    'verified': True, # todo?
+                    'seconds_until_despawn': time_left_in_seconds,
+                    'spawn_start': 777, # todo
+                    'spawn_end': 888, # todo
+                    'player_level': 17 # todo
+                })
+                if wh_poke['cp_multiplier'] is not None:
+                    wh_poke.update({
+                        'pokemon_level': calc_pokemon_level(
+                            wh_poke['cp_multiplier'])
+                    })
+                wh_update_queue.put(('pokemon', wh_poke))
 
     if pokemons:
         db_updates_queue.put((Pokemon, pokemons))
@@ -73,9 +101,10 @@ class FakeSearchScriptArgs:
     pass
 
 
-def fake_search_thread(args, position, db_updates_queue):
+def fake_search_thread(args, position, db_updates_queue, wh_update_queue):
     # pass control to fake_search_script
-    add_pokemon_func = (lambda objs: add_fake_pokemon(db_updates_queue, objs))
+    add_pokemon_func = (lambda objs: add_fake_pokemon(args, db_updates_queue, 
+                        wh_update_queue, objs))
     script = imp.load_source('', args.fake_search_script)
     fake_search_script_args = FakeSearchScriptArgs()
     fake_search_script_args.args = args
